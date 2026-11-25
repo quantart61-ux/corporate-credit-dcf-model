@@ -81,9 +81,20 @@ In addition to deterministic modeling, this repository codifies six verification
 
 ---
 
-## 5. How to Run
+## 5. Covenant Breakeven & Debt Deleveraging
+
+The **Covenant Breakeven Solver** (`find_covenant_breakeven_shocks`) uses bisection to solve the revenue contraction at which Net Leverage first reaches its 3.50x maximum and DSCR reaches its 1.25x minimum. Revenue sensitivity flows through the 35% fixed / 65% variable operating-cost structure, so fixed overhead remains sticky as sales fall. The solver reports the implied revenue and EBITDA dollar threshold for each covenant; DSCR uses CFADS (EBITDA less CapEx and cash taxes) over interest plus mandatory amortization.
+
+The **5-Year Debt Deleveraging Schedule** (`project_credit_deleveraging`) compares the Base Case with a persistent Mild Recession Stress. Each year it calculates interest on beginning debt, mandatory amortization equal to 5% of original principal (capped at remaining debt), and an excess-CFADS cash sweep after interest and mandatory amortization. Debt repayments are floored at the outstanding balance, so ending debt cannot fall below $0.00M. The schedule reports ending net debt, net leverage, and DSCR for each year.
+
+The Altman Z-Score calculation uses the case-study balance-sheet inputs of $1,625M total assets, $180M working capital, $450M retained earnings, and $900M total liabilities.
+
+---
+
+## 6. How to Run
 
 ```bash
 pip install -r requirements.txt
 python credit_dcf_model.py
+python -m pytest -v
 ```
