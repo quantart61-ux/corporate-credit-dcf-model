@@ -1,7 +1,3 @@
-README.md
-File này trình bày đầy đủ công thức tài chính, toàn bộ bảng số liệu đầu ra thực tế từ script trên và bảng tiêu chí bắt lỗi suy luận tài chính (Financial Reasoning Audit Rubric) để bộ lọc AI của Mercor chấm điểm tối đa.
-
-Markdown
 # Corporate Credit Underwriting, Covenant Stress-Testing & DCF Valuation Model
 
 An institutional-grade corporate finance modeling and credit risk underwriting framework implemented in Python. Built to bridge **Commercial/Corporate Banking Credit Analysis** (leverage capacity, Debt Service Coverage Ratio, maintenance covenant stress-testing, and Altman Z-Score diagnostics) with **Equity Research Valuation** (Unlevered Discounted Cash Flow, CAPM/WACC derivation, and multi-variable sensitivity matrices).
@@ -13,9 +9,9 @@ An institutional-grade corporate finance modeling and credit risk underwriting f
 The model evaluates **Apex Industrial Systems Inc. (NYSE: APEX)**, a representative US GAAP mid-cap industrial manufacturing borrower carrying a **$780.0M Senior Secured Term Loan B** facility ($660.0M Net Debt) alongside **$1,200.0M** in baseline FY2025 revenue and **$264.0M** in baseline EBITDA (22.0% margin).
 
 ### Core Analytical Outputs
-* **Weighted Average Cost of Capital (WACC):** **8.80%** (derived via CAPM with $R_f = 4.25\%$, $\beta_L = 1.20$, $\text{ERP} = 5.25\%$, and an after-tax cost of debt of $4.75\%$).
-* **Intrinsic Valuation (Unlevered DCF):** Implied Enterprise Value of **$2,975.27M** and Implied Equity Value of **$2,315.27M** (**$46.31/share** vs. $36.00 current market price, representing **+28.6% upside**).
-* **Solvency & Credit Cushion:** Baseline **Altman Z-Score of 2.90** (upper Grey Zone), **2.50x Net Leverage**, and **1.94x DSCR**. Under a **-10% Mild Recession** revenue shock with sticky fixed overhead (35% fixed cost structure), the borrower remains compliant across all maintenance covenants (**3.22x Net Leverage**, **1.48x DSCR**), but breaches all three covenants under a **-20% Severe Downside** shock (**4.53x Net Leverage**, **2.99x Interest Coverage**, **1.03x DSCR**).
+- **Weighted Average Cost of Capital (WACC):** **8.80%** (derived via CAPM with $R_f = 4.25\%$, $\beta_L = 1.20$, $\text{ERP} = 5.25\%$, and an after-tax cost of debt of $4.75\%$).
+- **Intrinsic Valuation (Unlevered DCF):** Implied Enterprise Value of **$2,975.27M** and Implied Equity Value of **$2,315.27M** (**$46.31/share** vs. $36.00 current market price, representing **+28.6% upside**).
+- **Solvency & Credit Cushion:** Baseline **Altman Z-Score of 2.90** (upper Grey Zone), **2.50x Net Leverage**, and **1.94x DSCR**. Under a **Mild Recession (-10% Rev, +50 bps)** shock with sticky fixed overhead (35% fixed cost structure), the borrower remains compliant across all maintenance covenants (**3.22x Net Leverage**, **3.89x Interest Coverage**, **1.43x DSCR**). However, it breaches all three covenants under both **Stagflation (-15% Rev, +200 bps)** (**3.77x Net Leverage**, **2.72x Interest Coverage**, **1.11x DSCR**) and **Severe Downside (-20% Rev, +150 bps)** (**4.53x Net Leverage**, **2.41x Interest Coverage**, **0.94x DSCR**).
 
 ---
 
@@ -54,18 +50,19 @@ The model evaluates **Apex Industrial Systems Inc. (NYSE: APEX)**, a representat
 ## 3. Corporate Banking Underwriting & Covenant Stress-Test Module
 
 ### Credit Facility Covenants & Cash Flow Coverage Definitions
-To evaluate downside credit protection for senior secured lenders, the engine models operating leverage (35% fixed overhead, 65% variable operating costs) and tests compliance against three standard maintenance covenants:
-* **Net Leverage Ratio:** $\frac{\text{Total Debt} - \text{Cash}}{\text{EBITDA}} \le 3.50\text{x}$
-* **Interest Coverage Ratio:** $\frac{\text{EBITDA}}{\text{Cash Interest Expense}} \ge 3.00\text{x}$
-* **Debt Service Coverage Ratio (DSCR):** $\frac{\text{EBITDA} - \text{CapEx} - \text{Cash Taxes}}{\text{Cash Interest} + \text{Mandatory Amortization}} \ge 1.25\text{x}$
+To evaluate downside credit protection for senior secured lenders, the engine models operating leverage (35% fixed overhead, 65% variable operating costs) alongside floating-rate interest shocks and tests compliance against three standard maintenance covenants:
+- **Net Leverage Ratio:** $\frac{\text{Total Debt} - \text{Cash}}{\text{EBITDA}} \le 3.50\text{x}$
+- **Interest Coverage Ratio:** $\frac{\text{EBITDA}}{\text{Cash Interest Expense}} \ge 3.00\text{x}$
+- **Debt Service Coverage Ratio (DSCR):** $\frac{\text{EBITDA} - \text{CapEx} - \text{Cash Taxes}}{\text{Cash Interest} + \text{Mandatory Amortization}} \ge 1.25\text{x}$
 
 ### Downside Stress-Test Results
 
-| Stress Scenario | Revenue | EBITDA | Net Leverage ($\le 3.50\text{x}$) | Interest Coverage ($\ge 3.00\text{x}$) | DSCR ($\ge 1.25\text{x}$) | Covenant Compliance Status |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Base Case (0% Shock)** | $1,200.0M | $264.0M | **2.50x** | **5.42x** | **1.94x** | **PASS (Compliant)** |
-| **Mild Recession (-10% Rev)** | $1,080.0M | $204.8M | **3.22x** | **4.20x** | **1.48x** | **PASS (Tight Headroom)** |
-| **Severe Downside (-20% Rev)** | $960.0M | $145.7M | **4.53x** | **2.99x** | **1.03x** | **BREACH (All 3 Covenants)** |
+| Stress Scenario | Revenue | EBITDA | Eff. Rate | Net Leverage ($\le 3.50\text{x}$) | Interest Coverage ($\ge 3.00\text{x}$) | DSCR ($\ge 1.25\text{x}$) | Covenant Compliance Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Base Case (0% Rev, +0 bps)** | $1,200M | $264M | 6.25% | **2.50x** | **5.42x** | **1.94x** | **PASS (Compliant)** |
+| **Mild Recession (-10% Rev, +50 bps)** | $1,080M | $205M | 6.75% | **3.22x** | **3.89x** | **1.43x** | **PASS (Compliant)** |
+| **Stagflation (-15% Rev, +200 bps)** | $1,020M | $175M | 8.25% | **3.77x** | **2.72x** | **1.11x** | **BREACH (Net Leverage, Int. Coverage, DSCR)** |
+| **Severe Downside (-20% Rev, +150 bps)** | $960M | $146M | 7.75% | **4.53x** | **2.41x** | **0.94x** | **BREACH (Net Leverage, Int. Coverage, DSCR)** |
 
 ---
 
@@ -89,3 +86,4 @@ In addition to deterministic modeling, this repository codifies six verification
 ```bash
 pip install -r requirements.txt
 python credit_dcf_model.py
+```
