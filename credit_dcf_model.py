@@ -1,282 +1,557 @@
 """
 Corporate Credit Underwriting, Covenant Stress-Testing & DCF Valuation Engine
-Author: Huynh Vi
-Framework: US GAAP Corporate Banking Credit Risk & Institutional Equity Research
+
+The model uses the Apex Industrial Systems (APEX) case-study assumptions
+documented in README.md. Monetary figures are in USD millions unless noted.
 """
 
 import pandas as pd
 
 
-def run_corporate_finance_model() -> None:
-    # ==========================================================================
-    # 1. BASELINE FINANCIALS & PRO FORMA CAPITAL STRUCTURE ($ MILLIONS)
-    # Benchmark: Caterpillar Inc. (NYSE: CAT) - ME&T Industrial Segment Baseline
-    # Credit Case: Pro Forma Senior Secured Acquisition Financing Facility
-    # ==========================================================================
+def get_baseline_inputs() -> dict:
+    """Return a fresh copy of the documented APEX operating and market inputs."""
     company = {
-        "name": "Caterpillar Inc. (NYSE: CAT) - ME&T Industrial Pro Forma Case",
-        "revenue_base": 61200.0,
-        "ebitda_margin_base": 0.235,      # 23.5% ME&T Operating EBITDA Margin
-        "da_pct_rev": 0.030,              # 3.0% Depreciation & Amortization
-        "capex_pct_rev_base": 0.032,      # 3.2% Maintenance & Growth CapEx
-        "nwc_pct_rev": 0.160,             # 16.0% Operating Net Working Capital
-        "tax_rate": 0.225,                # 22.5% Effective US GAAP Tax Rate
-        # Pro Forma Senior Secured Credit Facility & Liquidity
-        "total_debt": 38500.0,            # Senior Secured Term Loan B (Floating SOFR + Spread)
-        "cash": 4500.0,                   # Unrestricted ME&T Cash & Equivalents
-        "interest_rate": 0.0625,          # 6.25% Baseline All-In Floating Coupon
-        "mandatory_amort_pct": 0.050,     # 5.0% Mandatory Annual Principal Amortization
-        # Equity Market Data (ME&T Implied Standalone Equity)
-        "shares_outstanding": 485.0,      # Diluted Shares (Millions)
-        "current_share_price": 340.00,    # Reference Market Price ($/share)
-        # Balance Sheet Items (for Altman Z-Score)
-        "total_assets": 86500.0,
-        "working_capital": 11200.0,
-        "retained_earnings": 38400.0,
-        "total_liabilities": 62800.0,
+        "name": "Apex Industrial Systems Inc. (NYSE: APEX)",
+        "revenue_base": 1200.0,
+        "ebitda_margin_base": 0.220,
+        "da_pct_rev": 0.040,
+        "capex_pct_rev_base": 0.045,
+        "nwc_pct_rev": 0.150,
+        "tax_rate": 0.240,
+        "total_debt": 780.0,
+        "cash": 120.0,
+        "interest_rate": 0.0625,
+        "mandatory_amort_pct": 0.050,
+        "shares_outstanding": 50.0,
+        "current_share_price": 36.00,
+        "total_assets": 1625.0,
+        "working_capital": 180.0,
+        "retained_earnings": 450.0,
+        "total_liabilities": 900.0,
     }
-
     wacc_inputs = {
-        "rf": 0.0425,                     # 10Y US Treasury Yield
-        "erp": 0.0525,                    # Implied Equity Risk Premium
-        "beta_levered": 1.15,             # Industrial Sector Levered Beta
-        "pretax_cost_of_debt": 0.0625,    # Pre-Tax Cost of Senior Debt
-        "terminal_growth": 0.0250,        # Long-Term Nominal GDP Anchor
+        "rf": 0.0425,
+        "erp": 0.0525,
+        "beta_levered": 1.20,
+        "pretax_cost_of_debt": 0.0625,
+        "terminal_growth": 0.0250,
     }
+    return {"company": company, "wacc": wacc_inputs}
 
-    # ==========================================================================
-    # 2. COST OF CAPITAL (CAPM & WACC) + AUDIT ASSERTIONS
-    # ==========================================================================
-    cost_of_equity = wacc_inputs["rf"] + (wacc_inputs["beta_levered"] * wacc_inputs["erp"])
+
+def calculate_wacc(company: dict | None = None, wacc_inputs: dict | None = None) -> float:
+    """Calculate market-value-weighted WACC using the model's tax convention."""
+    inputs = get_baseline_inputs()
+    company = company or inputs["company"]
+    wacc_inputs = wacc_inputs or inputs["wacc"]
+
+    cost_of_equity = wacc_inputs["rf"] + wacc_inputs["beta_levered"] * wacc_inputs["erp"]
     after_tax_cost_of_debt = wacc_inputs["pretax_cost_of_debt"] * (1.0 - company["tax_rate"])
-
     market_cap = company["shares_outstanding"] * company["current_share_price"]
     total_capital = market_cap + company["total_debt"]
     weight_equity = market_cap / total_capital
     weight_debt = company["total_debt"] / total_capital
+    wacc = weight_equity * cost_of_equity + weight_debt * after_tax_cost_of_debt
 
-    wacc = (weight_equity * cost_of_equity) + (weight_debt * after_tax_cost_of_debt)
-
-    # Automated Financial Reasoning Guardrails (Audit Assertions)
-    assert abs((weight_equity + weight_debt) - 1.0) < 1e-9, (
+    assert abs(weight_equity + weight_debt - 1.0) < 1e-9, (
         "AUDIT VIOLATION: Capital structure weights must sum to 100%."
     )
-    assert wacc > 0.0, "AUDIT VIOLATION: WACC must be strictly positive."
-    assert wacc_inputs["terminal_growth"] < wacc, (
-        "AUDIT VIOLATION: Terminal growth rate cannot equal or exceed WACC."
+    if wacc <= 0.0:
+        raise ValueError("WACC must be strictly positive.")
+    return wacc
+
+
+def build_dcf_projection(company: dict | None = None) -> pd.DataFrame:
+    """Build the five-year FCFF projection with the documented NWC convention."""
+    if company is None:
+        company = get_baseline_inputs()["company"]
+
+    years = ["FY2026E", "FY2027E", "FY2028E", "FY2029E", "FY2030E"]
+    revenue_growth = [0.060, 0.055, 0.048, 0.042, 0.035]
+    ebitda_margins = [0.222, 0.225, 0.228, 0.230, 0.230]
+    capex_percentages = [0.045, 0.044, 0.043, 0.042, 0.040]
+    projection_rows = []
+    previous_revenue = company["revenue_base"]
+    previous_nwc = previous_revenue * company["nwc_pct_rev"]
+
+    for period, growth, ebitda_margin, capex_pct in zip(
+        years, revenue_growth, ebitda_margins, capex_percentages
+    ):
+        revenue = previous_revenue * (1.0 + growth)
+        ebitda = revenue * ebitda_margin
+        da = revenue * company["da_pct_rev"]
+        ebit = ebitda - da
+        nopat = ebit * (1.0 - company["tax_rate"])
+        capex = revenue * capex_pct
+        nwc = revenue * company["nwc_pct_rev"]
+        delta_nwc = nwc - previous_nwc
+
+        if revenue > previous_revenue:
+            assert delta_nwc > 0.0, "AUDIT VIOLATION: NWC expansion sign convention error."
+
+        fcff = nopat + da - capex - delta_nwc
+        projection_rows.append(
+            {
+                "Period": period,
+                "Revenue": revenue,
+                "EBITDA": ebitda,
+                "EBIT": ebit,
+                "NOPAT": nopat,
+                "D&A": da,
+                "CapEx": capex,
+                "Delta_NWC": delta_nwc,
+                "FCFF": fcff,
+            }
+        )
+        previous_revenue = revenue
+        previous_nwc = nwc
+
+    return pd.DataFrame(projection_rows)
+
+
+def calculate_valuation(
+    company: dict | None = None, wacc_inputs: dict | None = None
+) -> dict:
+    """Return the DCF projection and enterprise-to-equity valuation bridge."""
+    inputs = get_baseline_inputs()
+    company = company or inputs["company"]
+    wacc_inputs = wacc_inputs or inputs["wacc"]
+    wacc = calculate_wacc(company, wacc_inputs)
+    terminal_growth = wacc_inputs["terminal_growth"]
+    if terminal_growth >= wacc:
+        raise ValueError("Terminal growth rate must be strictly below WACC.")
+
+    projection = build_dcf_projection(company)
+    projection = projection.copy()
+    projection["PV_FCFF"] = [
+        row["FCFF"] / (1.0 + wacc) ** (index + 1)
+        for index, (_, row) in enumerate(projection.iterrows())
+    ]
+    pv_explicit_fcff = projection["PV_FCFF"].sum()
+    terminal_fcff = projection.iloc[-1]["FCFF"] * (1.0 + terminal_growth)
+    terminal_value = terminal_fcff / (wacc - terminal_growth)
+    pv_terminal_value = terminal_value / (1.0 + wacc) ** len(projection)
+    enterprise_value = pv_explicit_fcff + pv_terminal_value
+
+    market_cap = company["shares_outstanding"] * company["current_share_price"]
+    net_debt = company["total_debt"] - company["cash"]
+    equity_value = enterprise_value - net_debt
+    share_price = equity_value / company["shares_outstanding"]
+    terminal_ebitda = projection.iloc[-1]["EBITDA"]
+    exit_multiple = terminal_value / terminal_ebitda
+    if not 4.0 <= exit_multiple <= 20.0:
+        raise ValueError(
+            f"Implied Exit EV/EBITDA ({exit_multiple:.2f}x) outside industrial sanity band."
+        )
+
+    return {
+        "wacc": wacc,
+        "projection": projection,
+        "pv_explicit_fcff": pv_explicit_fcff,
+        "terminal_value": terminal_value,
+        "pv_terminal_value": pv_terminal_value,
+        "enterprise_value": enterprise_value,
+        "net_debt": net_debt,
+        "equity_value": equity_value,
+        "share_price": share_price,
+        "implied_upside": share_price / company["current_share_price"] - 1.0,
+        "exit_multiple": exit_multiple,
+        "market_cap": market_cap,
+    }
+
+
+def calculate_altman_z_score(company: dict | None = None) -> float:
+    """Calculate the public manufacturing Altman Z-Score."""
+    if company is None:
+        company = get_baseline_inputs()["company"]
+    ebit = company["revenue_base"] * (
+        company["ebitda_margin_base"] - company["da_pct_rev"]
     )
+    x1 = company["working_capital"] / company["total_assets"]
+    x2 = company["retained_earnings"] / company["total_assets"]
+    x3 = ebit / company["total_assets"]
+    x4 = (
+        company["shares_outstanding"]
+        * company["current_share_price"]
+        / company["total_liabilities"]
+    )
+    x5 = company["revenue_base"] / company["total_assets"]
+    return 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + x5
+
+
+def calculate_credit_metrics(
+    revenue_shock: float = 0.0,
+    rate_shock: float = 0.0,
+    capex_flex: float = 1.0,
+    company: dict | None = None,
+    covenants: dict | None = None,
+) -> dict:
+    """Calculate operating leverage, CFADS, debt service, and covenant status."""
+    inputs = get_baseline_inputs()
+    company = company or inputs["company"]
+    covenants = covenants or {
+        "max_net_leverage": 3.50,
+        "min_interest_cov": 3.00,
+        "min_dscr": 1.25,
+    }
+    if capex_flex < 0:
+        raise ValueError("CapEx flexibility must be non-negative.")
+
+    base_opex = company["revenue_base"] * (1.0 - company["ebitda_margin_base"])
+    fixed_opex = 0.35 * base_opex
+    variable_cost_ratio = 0.65 * base_opex / company["revenue_base"]
+    revenue = company["revenue_base"] * (1.0 + revenue_shock)
+    ebitda = revenue * (1.0 - variable_cost_ratio) - fixed_opex
+    da = company["revenue_base"] * company["da_pct_rev"]
+    ebit = ebitda - da
+    effective_rate = company["interest_rate"] + rate_shock
+    interest_expense = company["total_debt"] * effective_rate
+    mandatory_amortization = company["total_debt"] * company["mandatory_amort_pct"]
+    total_debt_service = interest_expense + mandatory_amortization
+    cash_taxes = max(0.0, (ebit - interest_expense) * company["tax_rate"])
+    capex = (
+        company["revenue_base"] * company["capex_pct_rev_base"] * capex_flex
+    )
+    cfads = ebitda - capex - cash_taxes
+    net_debt = company["total_debt"] - company["cash"]
+    net_leverage = net_debt / ebitda if ebitda > 0.0 else float("inf")
+    interest_coverage = (
+        ebitda / interest_expense if interest_expense > 0.0 else float("inf")
+    )
+    dscr = cfads / total_debt_service if total_debt_service > 0.0 else float("inf")
+
+    breaches = []
+    if ebitda <= 0.0 or net_leverage > covenants["max_net_leverage"]:
+        breaches.append("Net Leverage")
+    if ebitda <= 0.0 or interest_coverage < covenants["min_interest_cov"]:
+        breaches.append("Int. Coverage")
+    if dscr < covenants["min_dscr"]:
+        breaches.append("DSCR")
+
+    return {
+        "revenue": revenue,
+        "revenue_shock": revenue_shock,
+        "ebitda": ebitda,
+        "ebitda_margin": ebitda / revenue if revenue > 0.0 else float("nan"),
+        "da": da,
+        "ebit": ebit,
+        "effective_rate": effective_rate,
+        "interest_expense": interest_expense,
+        "mandatory_amortization": mandatory_amortization,
+        "total_debt_service": total_debt_service,
+        "cash_taxes": cash_taxes,
+        "capex": capex,
+        "cfads": cfads,
+        "net_debt": net_debt,
+        "net_leverage": net_leverage,
+        "interest_coverage": interest_coverage,
+        "dscr": dscr,
+        "breaches": breaches,
+        "status": "PASS (Compliant)" if not breaches else f"BREACH ({', '.join(breaches)})",
+    }
+
+
+def _solve_monotonic_breakeven(metric, target: float) -> float:
+    """Bisect a monotonic covenant metric over a downside revenue-shock range."""
+    low, high = -0.99, 0.50
+    low_value = metric(low) - target
+    high_value = metric(high) - target
+    if low_value * high_value > 0:
+        raise ValueError("Covenant breakeven is outside the supported shock range.")
+    for _ in range(100):
+        middle = (low + high) / 2.0
+        middle_value = metric(middle) - target
+        if abs(middle_value) < 1e-12:
+            return middle
+        if low_value * middle_value <= 0:
+            high = middle
+            high_value = middle_value
+        else:
+            low = middle
+            low_value = middle_value
+    return (low + high) / 2.0
+
+
+def find_covenant_breakeven_shocks(
+    company: dict | None = None, covenants: dict | None = None
+) -> pd.DataFrame:
+    """Solve the revenue contraction at which leverage and DSCR first breach."""
+    inputs = get_baseline_inputs()
+    company = company or inputs["company"]
+    covenants = covenants or {
+        "max_net_leverage": 3.50,
+        "min_interest_cov": 3.00,
+        "min_dscr": 1.25,
+    }
+    leverage_shock = _solve_monotonic_breakeven(
+        lambda shock: calculate_credit_metrics(
+            revenue_shock=shock, company=company, covenants=covenants
+        )["net_leverage"],
+        covenants["max_net_leverage"],
+    )
+    dscr_shock = _solve_monotonic_breakeven(
+        lambda shock: calculate_credit_metrics(
+            revenue_shock=shock, company=company, covenants=covenants
+        )["dscr"],
+        covenants["min_dscr"],
+    )
+
+    rows = []
+    for name, shock in (
+        ("Maximum Net Leverage", leverage_shock),
+        ("Minimum DSCR", dscr_shock),
+    ):
+        metrics = calculate_credit_metrics(
+            revenue_shock=shock, company=company, covenants=covenants
+        )
+        rows.append(
+            {
+                "Covenant": name,
+                "Revenue_Shock": shock,
+                "Revenue": metrics["revenue"],
+                "EBITDA": metrics["ebitda"],
+                "Net_Leverage": metrics["net_leverage"],
+                "DSCR": metrics["dscr"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def project_credit_deleveraging(
+    company: dict | None = None, years: int = 5
+) -> pd.DataFrame:
+    """Project scheduled amortization and excess-CFADS cash sweep by scenario."""
+    if years <= 0:
+        raise ValueError("Projection horizon must be a positive number of years.")
+    if company is None:
+        company = get_baseline_inputs()["company"]
+
+    scenarios = [
+        {
+            "Scenario": "Base Case",
+            "Revenue_Shock": 0.0,
+            "Rate_Shock": 0.0,
+            "CapEx_Flex": 1.0,
+        },
+        {
+            "Scenario": "Recession Stress",
+            "Revenue_Shock": -0.10,
+            "Rate_Shock": 0.005,
+            "CapEx_Flex": 0.90,
+        },
+    ]
+    rows = []
+    original_debt = company["total_debt"]
+    annual_mandatory = original_debt * company["mandatory_amort_pct"]
+    base_opex = company["revenue_base"] * (1.0 - company["ebitda_margin_base"])
+    fixed_opex = 0.35 * base_opex
+    variable_cost_ratio = 0.65 * base_opex / company["revenue_base"]
+    da = company["revenue_base"] * company["da_pct_rev"]
+
+    for scenario in scenarios:
+        debt_balance = original_debt
+        for year in range(1, years + 1):
+            revenue = company["revenue_base"] * (1.0 + scenario["Revenue_Shock"])
+            ebitda = revenue * (1.0 - variable_cost_ratio) - fixed_opex
+            interest = debt_balance * (company["interest_rate"] + scenario["Rate_Shock"])
+            cash_taxes = max(0.0, (ebitda - da - interest) * company["tax_rate"])
+            capex = (
+                company["revenue_base"]
+                * company["capex_pct_rev_base"]
+                * scenario["CapEx_Flex"]
+            )
+            cfads = ebitda - capex - cash_taxes
+            mandatory = min(debt_balance, annual_mandatory)
+            debt_after_mandatory = debt_balance - mandatory
+            cash_sweep = min(
+                debt_after_mandatory,
+                max(0.0, cfads - interest - mandatory),
+            )
+            ending_debt = max(0.0, debt_after_mandatory - cash_sweep)
+            total_debt_service = interest + mandatory
+            ending_net_debt = ending_debt - company["cash"]
+
+            rows.append(
+                {
+                    "Scenario": scenario["Scenario"],
+                    "Year": year,
+                    "Beginning_Debt": debt_balance,
+                    "EBITDA": ebitda,
+                    "CFADS": cfads,
+                    "Interest": interest,
+                    "Mandatory_Amortization": mandatory,
+                    "Cash_Sweep": cash_sweep,
+                    "Ending_Debt": ending_debt,
+                    "Ending_Net_Debt": ending_net_debt,
+                    "Net_Leverage": (
+                        ending_net_debt / ebitda if ebitda > 0.0 else float("inf")
+                    ),
+                    "DSCR": (
+                        cfads / total_debt_service
+                        if total_debt_service > 0.0
+                        else float("inf")
+                    ),
+                }
+            )
+            debt_balance = ending_debt
+    return pd.DataFrame(rows)
+
+
+def run_corporate_finance_model() -> None:
+    """Print the APEX valuation, solvency, covenant, and deleveraging report."""
+    inputs = get_baseline_inputs()
+    company = inputs["company"]
+    wacc_inputs = inputs["wacc"]
+    valuation = calculate_valuation(company, wacc_inputs)
+    projection = valuation["projection"]
 
     print("=" * 92)
     print(f"INSTITUTIONAL CREDIT & VALUATION REPORT: {company['name']}")
     print("=" * 92)
-    print(f"Cost of Equity (Ke):      {cost_of_equity:.2%}  |  After-Tax Cost of Debt (Kd): {after_tax_cost_of_debt:.2%}")
+    market_cap = company["shares_outstanding"] * company["current_share_price"]
+    total_capital = market_cap + company["total_debt"]
+    weight_equity = market_cap / total_capital
+    weight_debt = company["total_debt"] / total_capital
+    cost_of_equity = wacc_inputs["rf"] + wacc_inputs["beta_levered"] * wacc_inputs["erp"]
+    after_tax_cost_of_debt = wacc_inputs["pretax_cost_of_debt"] * (1 - company["tax_rate"])
+    print(
+        f"Cost of Equity (Ke):      {cost_of_equity:.2%}  |  "
+        f"After-Tax Cost of Debt (Kd): {after_tax_cost_of_debt:.2%}"
+    )
     print(f"Market Capital Structure: {weight_equity:.2%} Equity / {weight_debt:.2%} Debt")
-    print(f"Computed WACC:            {wacc:.2%}  |  Terminal Growth Rate (g):    {wacc_inputs['terminal_growth']:.2%}\n")
+    print(
+        f"Computed WACC:            {valuation['wacc']:.2%}  |  "
+        f"Terminal Growth Rate (g):    {wacc_inputs['terminal_growth']:.2%}\n"
+    )
 
-    # ==========================================================================
-    # 3. 5-YEAR OPERATING PROJECTION & UNLEVERED DCF (FCFF)
-    # ==========================================================================
-    years = ["FY2026E", "FY2027E", "FY2028E", "FY2029E", "FY2030E"]
-    rev_growth = [0.050, 0.045, 0.040, 0.035, 0.030]
-    ebitda_margins = [0.236, 0.238, 0.240, 0.240, 0.240]
-    capex_pcts = [0.032, 0.032, 0.031, 0.031, 0.030]
-
-    projection_rows = []
-    prev_rev = company["revenue_base"]
-    prev_nwc = prev_rev * company["nwc_pct_rev"]
-
-    for i, yr in enumerate(years):
-        rev = prev_rev * (1.0 + rev_growth[i])
-        ebitda = rev * ebitda_margins[i]
-        da = rev * company["da_pct_rev"]
-        ebit = ebitda - da
-        nopat = ebit * (1.0 - company["tax_rate"])
-        capex = rev * capex_pcts[i]
-        nwc = rev * company["nwc_pct_rev"]
-        delta_nwc = nwc - prev_nwc
-
-        # Audit Assertion: Growing revenue with constant NWC% must generate a positive NWC outflow
-        if rev > prev_rev:
-            assert delta_nwc > 0.0, "AUDIT VIOLATION: NWC expansion sign convention error."
-
-        # Unlevered Free Cash Flow (FCFF = NOPAT + D&A - CapEx - Change in NWC)
-        fcff = nopat + da - capex - delta_nwc
-        discount_factor = 1.0 / ((1.0 + wacc) ** (i + 1))
-        pv_fcff = fcff * discount_factor
-
-        projection_rows.append({
-            "Period": yr,
-            "Revenue": rev,
-            "EBITDA": ebitda,
-            "EBIT": ebit,
-            "NOPAT": nopat,
-            "D&A": da,
-            "CapEx": capex,
-            "Delta_NWC": delta_nwc,
-            "FCFF": fcff,
-            "PV_FCFF": pv_fcff,
-        })
-        prev_rev = rev
-        prev_nwc = nwc
-
-    dcf_df = pd.DataFrame(projection_rows)
     print("--- [PART 1A] 5-YEAR UNLEVERED FREE CASH FLOW (FCFF) PROJECTION ($M) ---")
-    print(dcf_df.round(2).to_string(index=False))
-
-    # Valuation Bridge (Enterprise Value -> Implied Equity Value -> Share Price)
-    sum_pv_fcff = dcf_df["PV_FCFF"].sum()
-    terminal_fcff = dcf_df.iloc[-1]["FCFF"] * (1.0 + wacc_inputs["terminal_growth"])
-    terminal_value = terminal_fcff / (wacc - wacc_inputs["terminal_growth"])
-    pv_terminal_value = terminal_value / ((1.0 + wacc) ** len(years))
-
-    # Institutional Cross-Check: Implied Exit EV / FY2030E EBITDA Multiple
-    terminal_ebitda = dcf_df.iloc[-1]["EBITDA"]
-    implied_exit_multiple = terminal_value / terminal_ebitda
-    assert 4.0 <= implied_exit_multiple <= 20.0, (
-        f"AUDIT VIOLATION: Implied Exit EV/EBITDA ({implied_exit_multiple:.2f}x) outside industrial sanity band."
-    )
-
-    enterprise_value = sum_pv_fcff + pv_terminal_value
-    net_debt = company["total_debt"] - company["cash"]
-    implied_equity_value = enterprise_value - net_debt
-    implied_share_price = implied_equity_value / company["shares_outstanding"]
-    implied_upside = (implied_share_price / company["current_share_price"]) - 1.0
-
+    print(projection.round(2).to_string(index=False))
     print("\n--- [PART 1B] ENTERPRISE & EQUITY VALUATION BRIDGE ---")
-    print(f"Cumulative PV of 5Y FCFF:       ${sum_pv_fcff:,.2f}M")
-    print(f"PV of Terminal Value (Gordon):  ${pv_terminal_value:,.2f}M ({pv_terminal_value / enterprise_value:.1%} of EV)")
-    print(f"Implied Exit EV/EBITDA (FY30E): {implied_exit_multiple:.2f}x (Cross-Check)")
-    print(f"Implied Enterprise Value (EV):  ${enterprise_value:,.2f}M")
-    print(f"Less: Net Debt (${company['total_debt']:,.0f}M - ${company['cash']:,.0f}M): ${net_debt:,.2f}M")
-    print(f"Implied Equity Value:           ${implied_equity_value:,.2f}M")
-    print(f"Implied Share Price:            ${implied_share_price:,.2f} (Current: ${company['current_share_price']:.2f} | Upside: {implied_upside:+.1%})\n")
-
-    # ==========================================================================
-    # 4. VALUATION SENSITIVITY MATRIX (WACC vs. TERMINAL GROWTH RATE)
-    # ==========================================================================
-    wacc_grid = [wacc - 0.010, wacc - 0.005, wacc, wacc + 0.005, wacc + 0.010]
-    tgr_grid = [0.015, 0.020, 0.025, 0.030, 0.035]
-
-    sens_df = pd.DataFrame(
-        index=[f"WACC {w:.2%}" for w in wacc_grid],
-        columns=[f"g = {g:.2%}" for g in tgr_grid],
+    print(f"Cumulative PV of 5Y FCFF:       ${valuation['pv_explicit_fcff']:,.2f}M")
+    print(
+        f"PV of Terminal Value (Gordon):  ${valuation['pv_terminal_value']:,.2f}M "
+        f"({valuation['pv_terminal_value'] / valuation['enterprise_value']:.1%} of EV)"
     )
-
-    for w in wacc_grid:
-        pv_stage_1 = sum(
-            dcf_df.iloc[t]["FCFF"] / ((1.0 + w) ** (t + 1)) for t in range(len(years))
-        )
-        for g in tgr_grid:
-            tv = (dcf_df.iloc[-1]["FCFF"] * (1.0 + g)) / (w - g)
-            pv_tv = tv / ((1.0 + w) ** len(years))
-            eq_val = pv_stage_1 + pv_tv - net_debt
-            sens_df.loc[f"WACC {w:.2%}", f"g = {g:.2%}"] = f"${eq_val / company['shares_outstanding']:,.2f}"
+    print(f"Implied Exit EV/EBITDA (FY30E): {valuation['exit_multiple']:.2f}x (Cross-Check)")
+    print(f"Implied Enterprise Value (EV):  ${valuation['enterprise_value']:,.2f}M")
+    print(
+        f"Less: Net Debt (${company['total_debt']:,.0f}M - ${company['cash']:,.0f}M): "
+        f"${valuation['net_debt']:,.2f}M"
+    )
+    print(f"Implied Equity Value:           ${valuation['equity_value']:,.2f}M")
+    print(
+        f"Implied Share Price:            ${valuation['share_price']:,.2f} "
+        f"(Current: ${company['current_share_price']:.2f} | "
+        f"Upside: {valuation['implied_upside']:+.1%})\n"
+    )
 
     print("--- [PART 1C] IMPLIED SHARE PRICE SENSITIVITY MATRIX (WACC vs. g) ---")
-    print(sens_df.to_string())
+    wacc_grid = [valuation["wacc"] + offset for offset in (-0.01, -0.005, 0, 0.005, 0.01)]
+    growth_grid = [0.015, 0.020, 0.025, 0.030, 0.035]
+    sensitivity = pd.DataFrame(
+        index=[f"WACC {rate:.2%}" for rate in wacc_grid],
+        columns=[f"g = {growth:.2%}" for growth in growth_grid],
+    )
+    for rate in wacc_grid:
+        pv_stage = sum(
+            row["FCFF"] / (1.0 + rate) ** (index + 1)
+            for index, (_, row) in enumerate(projection.iterrows())
+        )
+        for growth in growth_grid:
+            if growth >= rate:
+                sensitivity.loc[f"WACC {rate:.2%}", f"g = {growth:.2%}"] = "N/M"
+                continue
+            terminal_value = projection.iloc[-1]["FCFF"] * (1 + growth) / (rate - growth)
+            pv_terminal = terminal_value / (1 + rate) ** len(projection)
+            equity_value = pv_stage + pv_terminal - valuation["net_debt"]
+            sensitivity.loc[f"WACC {rate:.2%}", f"g = {growth:.2%}"] = (
+                f"${equity_value / company['shares_outstanding']:,.2f}"
+            )
+    print(sensitivity.to_string())
 
-    # ==========================================================================
-    # 5. SOLVENCY DIAGNOSTICS: ALTMAN Z-SCORE (PUBLIC MANUFACTURING MODEL)
-    # ==========================================================================
-    ebit_base = company["revenue_base"] * (company["ebitda_margin_base"] - company["da_pct_rev"])
-    x1 = company["working_capital"] / company["total_assets"]
-    x2 = company["retained_earnings"] / company["total_assets"]
-    x3 = ebit_base / company["total_assets"]
-    x4 = market_cap / company["total_liabilities"]
-    x5 = company["revenue_base"] / company["total_assets"]
-
-    z_score = (1.2 * x1) + (1.4 * x2) + (3.3 * x3) + (0.6 * x4) + (1.0 * x5)
+    z_score = calculate_altman_z_score(company)
     if z_score > 2.99:
         z_classification = "Safe Zone (> 2.99)"
     elif z_score >= 1.81:
         z_classification = "Grey Zone (1.81 - 2.99) - Moderate Credit Watch"
     else:
         z_classification = "Distress Zone (< 1.81) - High Default Risk"
-
     print("\n--- [PART 2A] ALTMAN Z-SCORE SOLVENCY DIAGNOSTIC (PRO FORMA) ---")
-    print(f"X1 (WC/TA): {x1:.3f} | X2 (RE/TA): {x2:.3f} | X3 (EBIT/TA): {x3:.3f} | X4 (MVE/TL): {x4:.3f} | X5 (Sales/TA): {x5:.3f}")
     print(f"Composite Altman Z-Score: {z_score:.2f} -> {z_classification}\n")
 
-    # ==========================================================================
-    # 6. CORPORATE BANKING UNDERWRITING & COVENANT STRESS-TEST ENGINE
-    # ==========================================================================
-    # Standard Senior Secured Credit Facility Maintenance Covenants:
-    # - Maximum Net Leverage (Net Debt / EBITDA) <= 3.50x
-    # - Minimum Interest Coverage (EBITDA / Cash Interest) >= 3.00x
-    # - Minimum DSCR ((EBITDA - CapEx - Cash Taxes) / Total Debt Service) >= 1.25x
-    covenants = {
-        "max_net_leverage": 3.50,
-        "min_interest_cov": 3.00,
-        "min_dscr": 1.25,
-    }
-
-    # Cost Structure Decomposition (Operating Leverage Modeling):
-    # 65% Variable Operating Costs, 35% Sticky Fixed Overhead
-    base_opex = company["revenue_base"] * (1.0 - company["ebitda_margin_base"])
-    fixed_opex = 0.35 * base_opex
-    variable_cost_ratio = (0.65 * base_opex) / company["revenue_base"]
-
-    stress_scenarios = [
-        {"Scenario": "Base Case (0% Rev, +0 bps)", "Rev_Shock": 0.00, "Rate_Shock": 0.0000, "CapEx_Flex": 1.00},
-        {"Scenario": "Mild Recession (-10% Rev, +50 bps)", "Rev_Shock": -0.10, "Rate_Shock": 0.0050, "CapEx_Flex": 0.90},
-        {"Scenario": "Stagflation (-15% Rev, +200 bps)", "Rev_Shock": -0.15, "Rate_Shock": 0.0200, "CapEx_Flex": 0.85},
-        {"Scenario": "Severe Downside (-20% Rev, +150 bps)", "Rev_Shock": -0.20, "Rate_Shock": 0.0150, "CapEx_Flex": 0.80},
+    scenarios = [
+        ("Base Case (0% Rev, +0 bps)", 0.00, 0.0000, 1.00),
+        ("Mild Recession (-10% Rev, +50 bps)", -0.10, 0.0050, 0.90),
+        ("Stagflation (-15% Rev, +200 bps)", -0.15, 0.0200, 0.85),
+        ("Severe Downside (-20% Rev, +150 bps)", -0.20, 0.0150, 0.80),
     ]
-
-    mandatory_amortization = company["total_debt"] * company["mandatory_amort_pct"]
     stress_rows = []
-
-    for sc in stress_scenarios:
-        rev = company["revenue_base"] * (1.0 + sc["Rev_Shock"])
-        ebitda = (rev * (1.0 - variable_cost_ratio)) - fixed_opex
-        da = company["revenue_base"] * company["da_pct_rev"]  # D&A fixed on installed PP&E
-        ebit = ebitda - da
-
-        effective_rate = company["interest_rate"] + sc["Rate_Shock"]
-        interest_expense = company["total_debt"] * effective_rate
-        total_debt_service = interest_expense + mandatory_amortization
-
-        ebt = ebit - interest_expense
-        cash_taxes = max(0.0, ebt * company["tax_rate"])
-        capex = (company["revenue_base"] * company["capex_pct_rev_base"]) * sc["CapEx_Flex"]
-        cfads = ebitda - capex - cash_taxes  # Cash Flow Available for Debt Service
-
-        breaches = []
-        if ebitda <= 0.0:
-            net_lev_str = "N/M (Neg. EBITDA)"
-            int_cov_str = "N/M (Neg. EBITDA)"
-            breaches.extend(["Net Leverage", "Int. Coverage"])
-        else:
-            net_leverage = net_debt / ebitda
-            interest_coverage = ebitda / interest_expense
-            net_lev_str = f"{net_leverage:.2f}x"
-            int_cov_str = f"{interest_coverage:.2f}x"
-            if net_leverage > covenants["max_net_leverage"]:
-                breaches.append("Net Leverage")
-            if interest_coverage < covenants["min_interest_cov"]:
-                breaches.append("Int. Coverage")
-
-        dscr = cfads / total_debt_service
-        if dscr < covenants["min_dscr"]:
-            breaches.append("DSCR")
-
-        status = "PASS (Compliant)" if not breaches else f"BREACH ({', '.join(breaches)})"
-
-        stress_rows.append({
-            "Scenario": sc["Scenario"],
-            "Revenue": f"${rev:,.0f}M",
-            "EBITDA": f"${ebitda:,.0f}M",
-            "Eff_Rate": f"{effective_rate:.2%}",
-            "Net_Lev": net_lev_str,
-            "Int_Cov": int_cov_str,
-            "DSCR": f"{dscr:.2f}x",
-            "Covenant_Status": status,
-        })
-
-    stress_df = pd.DataFrame(stress_rows)
+    for name, revenue_shock, rate_shock, capex_flex in scenarios:
+        metrics = calculate_credit_metrics(
+            revenue_shock, rate_shock, capex_flex, company
+        )
+        stress_rows.append(
+            {
+                "Scenario": name,
+                "Revenue": f"${metrics['revenue']:,.0f}M",
+                "EBITDA": f"${metrics['ebitda']:,.0f}M",
+                "Eff_Rate": f"{metrics['effective_rate']:.2%}",
+                "Net_Lev": f"{metrics['net_leverage']:.2f}x",
+                "Int_Cov": f"{metrics['interest_coverage']:.2f}x",
+                "DSCR": f"{metrics['dscr']:.2f}x",
+                "Covenant_Status": metrics["status"],
+            }
+        )
     print("--- [PART 2B] COMMERCIAL BANKING COVENANT STRESS-TEST MATRIX ---")
     print("Maintenance Covenants: Max Net Lev <= 3.50x | Min Int. Cov >= 3.00x | Min DSCR >= 1.25x")
-    print(stress_df.to_string(index=False))
+    print(pd.DataFrame(stress_rows).to_string(index=False))
+
+    breakevens = find_covenant_breakeven_shocks(company)
+    breakeven_display = breakevens.copy()
+    breakeven_display["Revenue_Shock"] = breakeven_display["Revenue_Shock"].map(
+        lambda value: f"{value:.2%}"
+    )
+    for column in ("Revenue", "EBITDA"):
+        breakeven_display[column] = breakeven_display[column].map(
+            lambda value: f"${value:,.2f}M"
+        )
+    breakeven_display["Net_Leverage"] = breakeven_display["Net_Leverage"].map(
+        lambda value: f"{value:.3f}x"
+    )
+    breakeven_display["DSCR"] = breakeven_display["DSCR"].map(
+        lambda value: f"{value:.3f}x"
+    )
+    print("\n--- [PART 2C] COVENANT BREAKEVEN REVENUE SHOCKS ---")
+    print(breakeven_display.to_string(index=False))
+
+    deleveraging = project_credit_deleveraging(company)
+    deleveraging_display = deleveraging[
+        [
+            "Scenario",
+            "Year",
+            "Mandatory_Amortization",
+            "Cash_Sweep",
+        "Ending_Debt",
+            "Ending_Net_Debt",
+            "Net_Leverage",
+            "DSCR",
+        ]
+    ].copy()
+    for column in (
+    "Mandatory_Amortization",
+    "Cash_Sweep",
+    "Ending_Debt",
+    "Ending_Net_Debt",
+    ):
+        deleveraging_display[column] = deleveraging_display[column].map(
+            lambda value: f"${value:,.2f}M"
+        )
+    for column in ("Net_Leverage", "DSCR"):
+        deleveraging_display[column] = deleveraging_display[column].map(
+            lambda value: f"{value:.2f}x"
+        )
+    print("\n--- [PART 2D] 5-YEAR DEBT AMORTIZATION & CASH SWEEP ($M) ---")
+    print(deleveraging_display.to_string(index=False))
     print("=" * 92)
 
 
